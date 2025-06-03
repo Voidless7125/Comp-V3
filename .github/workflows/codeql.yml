@@ -88,13 +88,32 @@ jobs:
       - name: Replace ARM GCC binaries in toolchain_win32
         shell: pwsh
         run: |
-          $srcBin = "$Env:GITHUB_WORKSPACE\tools\cpp\gcc-arm-none-eabi-14.2.rel1\gcc-arm-none-eabi-14.2.Rel1\bin"
+          # The extracted ARM toolchain has a different folder structure
+          $extractedDir = Get-ChildItem -Path "$Env:GITHUB_WORKSPACE\tools\cpp\gcc-arm-none-eabi-14.2.rel1" -Directory | Where-Object { $_.Name -like "arm-gnu-toolchain-*" } | Select-Object -First 1
+          
+          if ($extractedDir) {
+              $srcBin = "$($extractedDir.FullName)\bin"
+              Write-Host "Found ARM toolchain bin directory at: $srcBin"
+          } else {
+              Write-Error "Could not find extracted ARM toolchain directory"
+              exit 1
+          }
+          
           $dstBin = "$Env:GITHUB_WORKSPACE\tools\cpp\toolchain_win32\gcc\bin"
-          Copy-Item -Path "$srcBin\arm-none-eabi-ar.exe"    -Destination $dstBin -Force
-          Copy-Item -Path "$srcBin\arm-none-eabi-ld.exe"    -Destination $dstBin -Force
-          Copy-Item -Path "$srcBin\arm-none-eabi-objcopy.exe" -Destination $dstBin -Force
-          Copy-Item -Path "$srcBin\arm-none-eabi-size.exe"  -Destination $dstBin -Force
-
+          
+          # Check if source files exist before copying
+          $files = @("arm-none-eabi-ar.exe", "arm-none-eabi-ld.exe", "arm-none-eabi-objcopy.exe", "arm-none-eabi-size.exe")
+          
+          foreach ($file in $files) {
+              $srcFile = Join-Path $srcBin $file
+              if (Test-Path $srcFile) {
+                  Write-Host "Copying $file"
+                  Copy-Item -Path $srcFile -Destination $dstBin -Force
+              } else {
+                  Write-Error "File not found: $srcFile"
+                  exit 1
+              }
+          }
       # 5. Download and extract Clang 20.1.6, then replace clang.exe
       - name: Download and extract LLVM/Clang 20.1.6
         shell: pwsh
