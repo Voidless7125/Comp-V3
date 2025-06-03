@@ -77,7 +77,7 @@ jobs:
       - name: Download and extract ARM GNU Toolchain (14.2.Rel1)
         shell: pwsh
         run: |
-          $gccUrl  = 'https://developer.arm.com/-/media/Files/downloads/gnu-rm/14.2.rel1/gcc-arm-none-eabi-14.2.rel1-win32.zip'
+          $gccUrl  = 'https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-mingw-w64-i686-arm-none-eabi.zip'
           $outZip  = "$Env:GITHUB_WORKSPACE\gcc-arm-none-eabi-14.2-rel1.zip"
           $dest    = "$Env:GITHUB_WORKSPACE\tools\cpp\gcc-arm-none-eabi-14.2.rel1"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -99,22 +99,46 @@ jobs:
       - name: Download and extract LLVM/Clang 20.1.6
         shell: pwsh
         run: |
-          $clangUrl = 'https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.6/clang+llvm-20.1.6-win64.zip'
-          $outZip   = "$Env:GITHUB_WORKSPACE\clang-20.1.6.zip"
+          $clangUrl = 'https://github.com/llvm/llvm-project/releases/download/llvmorg-20.1.6/clang+llvm-20.1.6-x86_64-pc-windows-msvc.tar.xz'
+          $outTarXz = "$Env:GITHUB_WORKSPACE\clang-20.1.6.tar.xz"
+          $tempDest = "$Env:GITHUB_WORKSPACE\tools\cpp\clang-temp"
           $dest     = "$Env:GITHUB_WORKSPACE\tools\cpp\clang-20.1.6"
+          
+          New-Item -ItemType Directory -Force -Path $tempDest | Out-Null
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Invoke-WebRequest -Uri $clangUrl -OutFile $outZip
-          Expand-Archive -LiteralPath $outZip -DestinationPath $dest
+          
+          # Download the tar.xz file
+          Write-Host "Downloading Clang from: $clangUrl"
+          Invoke-WebRequest -Uri $clangUrl -OutFile $outTarXz
+          
+          # Extract using tar command (available on Windows 10/11)
+          Write-Host "Extracting Clang archive..."
+          tar -xf $outTarXz -C $tempDest
+          
+          # Move the nested folder contents to the destination
+          $extractedFolder = Get-ChildItem -Path $tempDest -Directory | Select-Object -First 1
+          if ($extractedFolder) {
+              Write-Host "Moving extracted files from $($extractedFolder.FullName) to $dest"
+              Move-Item -Path "$($extractedFolder.FullName)\*" -Destination $dest -Force
+          }
+          
+          # Cleanup
+          Remove-Item -Path $tempDest -Recurse -Force
+          Remove-Item -Path $outTarXz -Force
 
       - name: Replace clang.exe in toolchain_win32
         shell: pwsh
         run: |
-          # The extracted folder has a nested structure
-          $extractedDir = Get-ChildItem -Path "$Env:GITHUB_WORKSPACE\tools\cpp\clang-20.1.6" -Directory | Select-Object -First 1
-          $srcClangExe = "$($extractedDir.FullName)\bin\clang.exe"
+          $srcClangExe = "$Env:GITHUB_WORKSPACE\tools\cpp\clang-20.1.6\bin\clang.exe"
           $dstClangDir = "$Env:GITHUB_WORKSPACE\tools\cpp\toolchain_win32\clang\bin"
-          Copy-Item -Path $srcClangExe -Destination $dstClangDir -Force
-
+          
+          if (Test-Path $srcClangExe) {
+              Write-Host "Copying clang.exe from $srcClangExe to $dstClangDir"
+              Copy-Item -Path $srcClangExe -Destination $dstClangDir -Force
+          } else {
+              Write-Error "clang.exe not found at expected location: $srcClangExe"
+              exit 1
+          }
       # 6. Download and extract GNU Make 4.4.1, then replace make.exe
       - name: Download and extract GNU Make 4.4.1
         shell: pwsh
