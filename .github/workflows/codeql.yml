@@ -45,13 +45,23 @@ jobs:
       - name: Download and extract VEX C++ SDK
         shell: pwsh
         run: |
-          $sdkZipName   = "${Env:SDK_VERSION}.zip"
+          $manifestUrl = 'https://content.vexrobotics.com/vexos/public/V5/vscode/sdk/cpp/manifest.json'
+          $manifest   = Invoke-RestMethod -Uri $manifestUrl -ErrorAction Stop
+          $ver        = $manifest.latest
+          Write-Host "Fetched SDK version: $ver"
+          $sdkZipName   = "${ver}.zip"
           $sdkUrl       = "https://content.vexrobotics.com/vexos/public/V5/vscode/sdk/cpp/$sdkZipName"
+          Write-Host "Fetching SDK from URL: $sdkUrl"
+          try {
+              Invoke-WebRequest -Uri $sdkUrl -OutFile "$Env:GITHUB_WORKSPACE\$sdkZipName" -ErrorAction Stop
+          } catch {
+              Write-Error "Failed to download SDK. URL: $sdkUrl"
+              exit 1
+          }
           $destDir      = "$Env:GITHUB_WORKSPACE\tools\cpp\VEX_SDK\vexv5"
           New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-          Invoke-WebRequest -Uri $sdkUrl -OutFile "$Env:GITHUB_WORKSPACE\$sdkZipName"
           Expand-Archive -LiteralPath "$Env:GITHUB_WORKSPACE\$sdkZipName" -DestinationPath $destDir
-
+          
       # 2. Download and extract toolchain_win32.zip
       - name: Download and extract VEX toolchain_win32
         shell: pwsh
