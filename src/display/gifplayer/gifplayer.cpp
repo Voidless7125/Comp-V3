@@ -46,9 +46,14 @@ int emu_close(int)
 // Function to read data from the memory-mapped file
 int emu_read(int, void *buffer, size_t len)
 {
-    if (!emu_memory)
+    if (!emu_memory || !buffer || len == 0)
     {
         return -1;
+    }
+
+    if (emu_offset >= emu_size)
+    {
+        return 0; // EOF
     }
 
     size_t read_length = ((emu_size - 1) < emu_offset + len) ? emu_size - emu_offset : len;
@@ -155,6 +160,14 @@ gd_GIF *gd_open_gif(const char *fname)
     width = read_num(fd);
     height = read_num(fd);
 
+    // Validate dimensions to prevent excessive memory allocation
+    if (width == 0 || height == 0 || width > 4096 || height > 4096)
+    {
+        logHandler("gd_open_gif", "invalid or excessive dimensions", Log::Level::Error, 3);
+        close(fd);
+        return nullptr;
+    }
+    
     // Read the packed fields
     read(fd, &fdsz, 1);
 
@@ -558,27 +571,35 @@ static int read_image(gd_GIF *gif)
     return read_image_data(gif, interlace);
 }
 
-// Function to render a frame rectangle
+// Function to render a frame rectangle - optimized for better performance
 static void render_frame_rect(gd_GIF *gif, uint8_t *buffer)
 {
     int i, j, k;
     uint8_t index;
     const uint8_t *color;
+    const uint8_t tindex = gif->gce.tindex;
+    const bool has_transparency = gif->gce.transparency;
+    
     i = gif->fy * gif->width + gif->fx;
     for (j = 0; j < gif->fh; j++)
     {
         for (k = 0; k < gif->fw; k++)
         {
             index = gif->frame[(gif->fy + j) * gif->width + gif->fx + k];
-            color = &gif->palette->colors[index * 3];
-            if (!gif->gce.transparency || index != gif->gce.tindex)
-                memcpy(&buffer[(i + k) * 3], color, 3);
+            if (!has_transparency || index != tindex)
+            {
+                color = &gif->palette->colors[index * 3];
+                uint8_t *dest = &buffer[(i + k) * 3];
+                dest[0] = color[0];
+                dest[1] = color[1];
+                dest[2] = color[2];
+            }
         }
         i += gif->width;
     }
 }
 
-// Function to dispose of the current frame based on the disposal method
+// Function to dispose of the current frame based on the disposal method - optimized
 static void dispose(gd_GIF *gif)
 {
     int i, j, k;
@@ -591,7 +612,12 @@ static void dispose(gd_GIF *gif)
         for (j = 0; j < gif->fh; j++)
         {
             for (k = 0; k < gif->fw; k++)
-                memcpy(&gif->canvas[(i + k) * 3], bgcolor, 3);
+            {
+                uint8_t *dest = &gif->canvas[(i + k) * 3];
+                dest[0] = bgcolor[0];
+                dest[1] = bgcolor[1];
+                dest[2] = bgcolor[2];
+            }
             i += gif->width;
         }
         break;
@@ -670,6 +696,13 @@ int vex::Gif::render_task(void *arg)
     Gif *instance = static_cast<Gif *>(arg);
     gd_GIF *gif = instance->_gif;
 
+    // Calculate frame time limit if max_fps is set
+    int32_t frame_time_limit = 0;
+    if (instance->_max_fps > 0)
+    {
+        frame_time_limit = 1000 / instance->_max_fps; // Convert to milliseconds
+    }
+
     for (unsigned looped = 1;; looped++)
     {
         int32_t now = instance->_timer.system();
@@ -678,23 +711,49 @@ int vex::Gif::render_task(void *arg)
 
         while ((err = gd_get_frame(gif)) > 0)
         {
-            gd_render_frame(gif, static_cast<uint8_t *>(instance->_buffer));
+            int32_t frame_start = instance->_timer.system();
+            
+            // Only render if we have valid frame data
+            if (gif->frame && instance->_buffer)
+            {
+                gd_render_frame(gif, static_cast<uint8_t *>(instance->_buffer));
 
-            instance->_lcd.drawImageFromBuffer(static_cast<uint32_t *>(instance->_buffer), instance->_sx, instance->_sy, gif->width, gif->height);
+                instance->_lcd.drawImageFromBuffer(static_cast<uint32_t *>(instance->_buffer), 
+                                                 instance->_sx, instance->_sy, 
+                                                 gif->width, gif->height);
+                
+                // Use VEX render API with vsync support
+                if (instance->_enable_vsync)
+                {
+                    Brain.Screen.render(true, true); // Wait for vsync, run scheduler
+                }
+                else
+                {
+                    Brain.Screen.render(false, true); // Don't wait for vsync, run scheduler
+                }
+            }
+            
             instance->_frame++;
 
-            // how long to get, render and draw to screen
-            int32_t delay = gif->gce.delay * 10;
-
-            // do we need delay to honor loop speed
-            int32_t delta = instance->_timer.system() - now;
-            delay -= delta;
-            if (delay > 0)
+            // Calculate frame timing
+            int32_t gif_delay = gif->gce.delay * 10; // GIF delay in milliseconds
+            int32_t frame_time = instance->_timer.system() - frame_start;
+            
+            // Apply frame rate limiting if enabled
+            int32_t target_delay = gif_delay;
+            if (frame_time_limit > 0 && frame_time_limit > gif_delay)
             {
-                this_thread::sleep_for(delay);
+                target_delay = frame_time_limit;
+            }
+            
+            // Calculate remaining delay needed
+            int32_t remaining_delay = target_delay - frame_time;
+            if (remaining_delay > 0)
+            {
+                this_thread::sleep_for(remaining_delay);
             }
 
-            // for next loop
+            // Update timing for next loop
             now = instance->_timer.system();
         }
         if (err == -1)
@@ -720,6 +779,8 @@ vex::Gif::Gif(const char *fname, int sx, int sy)
 {
     _sx = sx;
     _sy = sy;
+    _enable_vsync = ConfigManager.getVsyncGif(); // Get from config by default
+    _max_fps = 0; // No limit by default
 
     // open gif file
     // will allocate memory for background and one animation frame.
@@ -735,9 +796,44 @@ vex::Gif::Gif(const char *fname, int sx, int sy)
     {
         // out of memory
         gd_close_gif(_gif);
+        _gif = nullptr;
     }
     else
     {
+        // Clear buffer to prevent artifacts
+        memset(_buffer, 0, _gif->width * _gif->height * sizeof(uint32_t));
+        // create thread to handle this gif
+        _t1 = thread(render_task, static_cast<void *>(this));
+    }
+}
+
+vex::Gif::Gif(const char *fname, int sx, int sy, bool enable_vsync, int max_fps)
+{
+    _sx = sx;
+    _sy = sy;
+    _enable_vsync = enable_vsync;
+    _max_fps = max_fps;
+
+    // open gif file
+    // will allocate memory for background and one animation frame.
+    _gif = gd_open_gif(fname);
+    if (_gif == nullptr)
+    {
+        return;
+    }
+
+    // memory for rendering frame
+    _buffer = static_cast<uint32_t *>(malloc(_gif->width * _gif->height * sizeof(uint32_t)));
+    if (_buffer == nullptr)
+    {
+        // out of memory
+        gd_close_gif(_gif);
+        _gif = nullptr;
+    }
+    else
+    {
+        // Clear buffer to prevent artifacts
+        memset(_buffer, 0, _gif->width * _gif->height * sizeof(uint32_t));
         // create thread to handle this gif
         _t1 = thread(render_task, static_cast<void *>(this));
     }

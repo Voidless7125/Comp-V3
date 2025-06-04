@@ -58,6 +58,17 @@ extern "C"
 
 namespace vex
 {
+    /**
+     * @class Gif
+     * @brief Enhanced GIF player with vsync support and frame rate control
+     * 
+     * This class provides improved GIF playback with:
+     * - VEX render() API integration for proper vsync support
+     * - Frame rate limiting capability 
+     * - Better memory management and error handling
+     * - Performance optimizations for smoother playback
+     * - Configuration integration with ConfigManager
+     */
     class Gif
     {
     private:
@@ -66,6 +77,8 @@ namespace vex
         int _sy;
         void *_buffer = nullptr;
         int _frame = 0;
+        bool _enable_vsync = false;
+        int _max_fps = 0; // 0 means no limit
 
         vex::timer _timer;
         vex::brain::lcd _lcd;
@@ -75,8 +88,28 @@ namespace vex
         void cleanup();
 
     public:
+        /**
+         * @brief Construct GIF player with config-based settings
+         * @param fname Path to GIF file
+         * @param sx X position on screen
+         * @param sy Y position on screen
+         */
         Gif(const char *fname, int sx, int sy);
+        
+        /**
+         * @brief Construct GIF player with explicit settings
+         * @param fname Path to GIF file  
+         * @param sx X position on screen
+         * @param sy Y position on screen
+         * @param enable_vsync Enable VEX vsync rendering
+         * @param max_fps Maximum frame rate (0 = no limit)
+         */
+        Gif(const char *fname, int sx, int sy, bool enable_vsync, int max_fps = 0);
+        
         ~Gif();
+        
         int getFrameIndex();
+        void setVsync(bool enable) { _enable_vsync = enable; }
+        void setMaxFps(int fps) { _max_fps = fps; }
     };
 }
