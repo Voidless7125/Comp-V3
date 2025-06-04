@@ -46,9 +46,14 @@ int emu_close(int)
 // Function to read data from the memory-mapped file
 int emu_read(int, void *buffer, size_t len)
 {
-    if (!emu_memory)
+    if (!emu_memory || !buffer || len == 0)
     {
         return -1;
+    }
+
+    if (emu_offset >= emu_size)
+    {
+        return 0; // EOF
     }
 
     size_t read_length = ((emu_size - 1) < emu_offset + len) ? emu_size - emu_offset : len;
@@ -708,18 +713,24 @@ int vex::Gif::render_task(void *arg)
         {
             int32_t frame_start = instance->_timer.system();
             
-            gd_render_frame(gif, static_cast<uint8_t *>(instance->_buffer));
+            // Only render if we have valid frame data
+            if (gif->frame && instance->_buffer)
+            {
+                gd_render_frame(gif, static_cast<uint8_t *>(instance->_buffer));
 
-            instance->_lcd.drawImageFromBuffer(static_cast<uint32_t *>(instance->_buffer), instance->_sx, instance->_sy, gif->width, gif->height);
-            
-            // Use VEX render API with vsync support
-            if (instance->_enable_vsync)
-            {
-                Brain.Screen.render(true, true); // Wait for vsync, run scheduler
-            }
-            else
-            {
-                Brain.Screen.render(false, true); // Don't wait for vsync, run scheduler
+                instance->_lcd.drawImageFromBuffer(static_cast<uint32_t *>(instance->_buffer), 
+                                                 instance->_sx, instance->_sy, 
+                                                 gif->width, gif->height);
+                
+                // Use VEX render API with vsync support
+                if (instance->_enable_vsync)
+                {
+                    Brain.Screen.render(true, true); // Wait for vsync, run scheduler
+                }
+                else
+                {
+                    Brain.Screen.render(false, true); // Don't wait for vsync, run scheduler
+                }
             }
             
             instance->_frame++;
