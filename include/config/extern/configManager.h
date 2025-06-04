@@ -46,7 +46,6 @@ public:
     void setValuesFromConfig();
     bool validateStringNotEmpty(const std::string &value);
     void parseConfig();
-    void parseComplexConfig(std::ifstream &configFile, const std::string &section);
 
     enum class DriveMode
     {

@@ -15,20 +15,41 @@ int emu_open(const char *path, int)
     emu_offset = 0;
     emu_size = 0;
 
-    FILE *f = fopen(path, "rb");
-    fseek(f, 0, SEEK_END);
-    emu_size = ftell(f);
-    fseek(f, 0, SEEK_SET); // same as rewind(f);
+    // Check if SD card is inserted
+    if (!Brain.SDcard.isInserted())
+    {
+        return -1;
+    }
+    
+    // Check if file exists
+    if (!Brain.SDcard.exists(path))
+    {
+        return -1;
+    }
+    
+    // Get file size
+    emu_size = Brain.SDcard.size(path);
+    if (emu_size <= 0)
+    {
+        return -1;
+    }
 
     emu_memory = static_cast<uint8_t *>(malloc(emu_size + 1));
     if (!emu_memory)
     {
-        fclose(f);
         return -1;
     }
 
-    fread(emu_memory, emu_size, 1, f);
-    fclose(f);
+    // Load file using VEX API
+    int bytesRead = Brain.SDcard.loadfile(path, reinterpret_cast<char*>(emu_memory), emu_size);
+    if (bytesRead <= 0)
+    {
+        free(emu_memory);
+        emu_memory = nullptr;
+        return -1;
+    }
+    
+    emu_size = bytesRead; // Update size to actual bytes read
 
     return 1;
 }
