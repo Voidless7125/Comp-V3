@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <map>
 
 #include "v5_cpp.h"

@@ -46,7 +46,6 @@ public:
     void setValuesFromConfig();
     bool validateStringNotEmpty(const std::string &value);
     void parseConfig();
-    void parseComplexConfig(std::ifstream &configFile, const std::string &section);
 
     enum class DriveMode
     {
@@ -142,6 +141,12 @@ private:
 
     void readMaintenanceData();
     void writeMaintenanceData();
+    
+    // VEX API helper functions
+    std::string readFileToString(const std::string &filename);
+    bool writeStringToFile(const std::string &filename, const std::string &content, bool append = false);
+    bool fileExists(const std::string &filename);
+    int getFileSize(const std::string &filename);
 };
 
 /// @brief Manages configuration settings.
