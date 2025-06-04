@@ -1,2 +1,9 @@
 /build
 /.vscode
+
+# Python WebSocket client files
+*.csv
+vex_telemetry_*.csv
+__pycache__/
+*.pyc
+*.pyo
