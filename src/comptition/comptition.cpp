@@ -1,5 +1,24 @@
 #include "vex.h"
 
+/**
+ * Advanced Drive Control Systems
+ * 
+ * This file implements traction control, stability control, and ABS systems
+ * for improved drive behavior during acceleration, turning, and uneven terrain.
+ * 
+ * Control Systems:
+ * - Traction Control: Detects and corrects wheel slip by monitoring motor velocities
+ * - Stability Control: Maintains directional stability using inertial sensor data
+ * - ABS: Prevents wheel lockup during hard braking
+ * 
+ * Controls:
+ * - Up: Drive mode menu
+ * - Down: Toggle debug output
+ * - L1: Toggle traction control
+ * - L2: Toggle stability control  
+ * - R1: Toggle ABS
+ */
+
 void autonomous()
 {
     logHandler("autonomous", "Test message.", Log::Level::Warn, 2);
