@@ -169,6 +169,24 @@ void motorMonitor()
                 motorTemps[0], motorTemps[1], motorTemps[2], motorTemps[3], Brain.Battery.voltage());
             logHandler("motorMonitor", motorTempsStr, Log::Level::Info);
 
+            // Log detailed motor data including RPM, current, and position
+            std::array motors = {&frontLeftMotor, &frontRightMotor, &rearLeftMotor, &rearRightMotor};
+            for (size_t i = 0; i < motors.size(); ++i)
+            {
+                if (motors[i]->installed())
+                {
+                    int commandedRpm = vexMotorVelocityGet(motors[i]->index());
+                    int actualRpm = motors[i]->velocity(vex::velocityUnits::rpm);
+                    double position = motors[i]->position(vex::rotationUnits::rev);
+                    double current = motors[i]->current();
+                    
+                    std::string motorDetailStr = std::format(
+                        "\n | {}: CmdRPM: {} | ActRPM: {} | Pos: {:.2f}rev | Current: {:.2f}A",
+                        motorNames[i], commandedRpm, actualRpm, position, current);
+                    logHandler("motorMonitor", motorDetailStr, Log::Level::Info);
+                }
+            }
+
             std::string dataBuffer = std::format("\nX Axis: {}\nY Axis: {}\nZ Axis: {}",
                                                  InertialGyro.pitch(vex::rotationUnits::deg),
                                                  InertialGyro.roll(vex::rotationUnits::deg),
