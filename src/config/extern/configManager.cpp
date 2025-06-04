@@ -1,5 +1,5 @@
 #include "vex.h"
-#include <fstream>
+#include <memory>
 
 std::array<ControllerButtonInfo, 12> createControllerButtonArray(const vex::controller &controller)
 {
@@ -308,4 +308,100 @@ Log::Level configManager::stringToLogLevel(const std::string &str)
         logHandler("configManager::stringToLogLevel", "Invalid log level", Log::Level::Error, 5);
         return Log::Level::Info; // Default return to avoid compilation error
     }
+}
+
+// VEX API helper functions
+std::string configManager::readFileToString(const std::string &filename)
+{
+    if (!Brain.SDcard.isInserted())
+    {
+        logHandler("readFileToString", "SD card not inserted", Log::Level::Error);
+        return "";
+    }
+    
+    if (!Brain.SDcard.exists(filename.c_str()))
+    {
+        logHandler("readFileToString", "File does not exist: " + filename, Log::Level::Warn);
+        return "";
+    }
+    
+    int size = Brain.SDcard.size(filename.c_str());
+    if (size <= 0)
+    {
+        logHandler("readFileToString", "File is empty or invalid size: " + filename, Log::Level::Warn);
+        return "";
+    }
+    
+    // Allocate buffer for file content
+    std::unique_ptr<char[]> buffer(new char[size + 1]);
+    if (!buffer)
+    {
+        logHandler("readFileToString", "Failed to allocate buffer for file: " + filename, Log::Level::Error);
+        return "";
+    }
+    
+    // Load file into buffer
+    int bytesRead = Brain.SDcard.loadfile(filename.c_str(), buffer.get(), size);
+    if (bytesRead <= 0)
+    {
+        logHandler("readFileToString", "Failed to read file: " + filename, Log::Level::Error);
+        return "";
+    }
+    
+    // Null terminate the buffer
+    buffer[bytesRead] = '\0';
+    
+    return std::string(buffer.get());
+}
+
+bool configManager::writeStringToFile(const std::string &filename, const std::string &content, bool append)
+{
+    if (!Brain.SDcard.isInserted())
+    {
+        logHandler("writeStringToFile", "SD card not inserted", Log::Level::Error);
+        return false;
+    }
+    
+    int bytesWritten = 0;
+    if (append)
+    {
+        bytesWritten = Brain.SDcard.appendfile(filename.c_str(), const_cast<char*>(content.c_str()), content.length());
+    }
+    else
+    {
+        bytesWritten = Brain.SDcard.savefile(filename.c_str(), const_cast<char*>(content.c_str()), content.length());
+    }
+    
+    if (bytesWritten != static_cast<int>(content.length()))
+    {
+        logHandler("writeStringToFile", "Failed to write complete content to file: " + filename, Log::Level::Error);
+        return false;
+    }
+    
+    return true;
+}
+
+bool configManager::fileExists(const std::string &filename)
+{
+    if (!Brain.SDcard.isInserted())
+    {
+        return false;
+    }
+    
+    return Brain.SDcard.exists(filename.c_str());
+}
+
+int configManager::getFileSize(const std::string &filename)
+{
+    if (!Brain.SDcard.isInserted())
+    {
+        return -1;
+    }
+    
+    if (!Brain.SDcard.exists(filename.c_str()))
+    {
+        return -1;
+    }
+    
+    return Brain.SDcard.size(filename.c_str());
 }

@@ -1,5 +1,4 @@
 #include "vex.h"
-#include <fstream>
 
 /**
  * @brief Converts a given Log::Level enumeration value to its corresponding string representation.
@@ -250,19 +249,30 @@ void SD_Card_Logging(const Log::Level &level, const std::string &functionName, c
         return;
     }
 
-    std::ofstream LogFile("log.rtf", std::ios_base::out | std::ios_base::app);
     if (ConfigManager.getLogToFile())
     {
-        if (!LogFile)
+        if (!Brain.SDcard.isInserted())
         {
             logFileCreationFailed = true;
-            logHandler("logHandler", "Could not create logfile.", Log::Level::Warn, 3);
+            logHandler("logHandler", "Could not create logfile - SD card not inserted.", Log::Level::Warn, 3);
             ConfigManager.setLogToFile(false);
             return;
         }
-        LogFile << "{\\rtf1\\ansi\\deff0 {\\colortbl;\\red0\\green0\\blue0;\\red255\\green0\\blue0;\\red0\\green255\\blue0;\\red0\\green0\\blue255;\\red255\\green255\\blue0;\\red255\\green0\\blue255;\\red0\\green255\\blue255;}\n";
-        LogFile << "\\cf" << rtfColors[static_cast<int>(level)] << " ";
-        LogFile << "[" << LogToString(level) << "] > Time: " << Brain.Timer.time(vex::timeUnits::sec) << " > Module: " << functionName << " > " << message << "\\line\n";
-        LogFile << "}\n";
+
+        // Prepare log content
+        std::string logContent = "{\\rtf1\\ansi\\deff0 {\\colortbl;\\red0\\green0\\blue0;\\red255\\green0\\blue0;\\red0\\green255\\blue0;\\red0\\green0\\blue255;\\red255\\green255\\blue0;\\red255\\green0\\blue255;\\red0\\green255\\blue255;}\n";
+        logContent += "\\cf" + std::to_string(rtfColors[static_cast<int>(level)]) + " ";
+        logContent += "[" + LogToString(level) + "] > Time: " + std::to_string(Brain.Timer.time(vex::timeUnits::sec)) + " > Module: " + functionName + " > " + message + "\\line\n";
+        logContent += "}\n";
+        
+        // Write to SD card using VEX API (append mode)
+        int bytesWritten = Brain.SDcard.appendfile("log.rtf", const_cast<char*>(logContent.c_str()), logContent.length());
+        if (bytesWritten != static_cast<int>(logContent.length()))
+        {
+            logFileCreationFailed = true;
+            logHandler("logHandler", "Could not write to logfile.", Log::Level::Warn, 3);
+            ConfigManager.setLogToFile(false);
+            return;
+        }
     }
 }

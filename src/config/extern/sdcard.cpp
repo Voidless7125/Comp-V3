@@ -1,5 +1,5 @@
 #include "vex.h"
-#include <fstream>
+#include <sstream>
 
 /**
  * @brief Resets or initializes the configuration file based on user input.
@@ -29,14 +29,9 @@ void configManager::resetOrInitializeConfig(std::string_view message)
     if (resetcfg == "Yes")
     {
         primaryController.Screen.print("Resetting config file...");
-        std::ofstream configFile(configFileName);
-        if (!configFile)
-        {
-            logHandler("resetOrInitializeConfig", "Could not create config.", Log::Level::Warn, 3);
-            return;
-        }
-        // Write default configuration
-        configFile << R"(
+        
+        // Create default configuration content
+        std::string configContent = R"(
     # Config File:
     MOTOR_CONFIG {
         FRONT_LEFT_MOTOR {
@@ -80,9 +75,13 @@ void configManager::resetOrInitializeConfig(std::string_view message)
     DRIVEMODE=Split
     LEFTDEADZONE=10
     RIGHTDEADZONE=10
-    VERSION=)" << Version
-                   << "\n";
-        configFile.close();
+    VERSION=)" + Version + "\n";
+
+        if (!writeStringToFile(configFileName, configContent))
+        {
+            logHandler("resetOrInitializeConfig", "Could not create config.", Log::Level::Warn, 3);
+            return;
+        }
 
         logHandler("resetConfig", "Successfully reset config file.", Log::Level::Debug);
     }
@@ -101,14 +100,11 @@ void configManager::resetOrInitializeConfig(std::string_view message)
  */
 void configManager::writeMaintenanceData()
 {
-    std::ofstream maintenanceFile(maintenanceFileName);
-    if (maintenanceFile.is_open())
-    {
-        maintenanceFile << "ODOMETER=" << odometer << "\n";
-        maintenanceFile << "LAST_SERVICE=" << lastService << "\n";
-        maintenanceFile << "SERVICE_INTERVAL=" << serviceInterval << "\n";
-        maintenanceFile.close();
-    }
+    std::string content = "ODOMETER=" + std::to_string(odometer) + "\n";
+    content += "LAST_SERVICE=" + std::to_string(lastService) + "\n";
+    content += "SERVICE_INTERVAL=" + std::to_string(serviceInterval) + "\n";
+    
+    writeStringToFile(maintenanceFileName, content);
 }
 
 /**
@@ -129,28 +125,25 @@ void configManager::setDriveMode(const configManager::DriveMode &mode)
     driveMode = mode; // Update in-memory
 
     // Also write to config file
-    std::ofstream configFile(configFileName, std::ios::app);
-    if (configFile.is_open())
+    std::string content = "DRIVEMODE=";
+    switch (mode)
     {
-        configFile << "DRIVEMODE=";
-        switch (mode)
-        {
-        case DriveMode::LeftArcade:
-            configFile << "LeftArcade";
-            break;
-        case DriveMode::RightArcade:
-            configFile << "RightArcade";
-            break;
-        case DriveMode::SplitArcade:
-            configFile << "SplitArcade";
-            break;
-        case DriveMode::Tank:
-            configFile << "Tank";
-            break;
-        }
-        configFile << "\n";
-        configFile.close();
+    case DriveMode::LeftArcade:
+        content += "LeftArcade";
+        break;
+    case DriveMode::RightArcade:
+        content += "RightArcade";
+        break;
+    case DriveMode::SplitArcade:
+        content += "SplitArcade";
+        break;
+    case DriveMode::Tank:
+        content += "Tank";
+        break;
     }
+    content += "\n";
+    
+    writeStringToFile(configFileName, content, true); // append = true
 }
 
 /**
@@ -169,31 +162,33 @@ void configManager::setDriveMode(const configManager::DriveMode &mode)
  */
 void configManager::readMaintenanceData()
 {
-    std::ifstream maintenanceFile(maintenanceFileName);
-    if (maintenanceFile.is_open())
+    std::string fileContent = readFileToString(maintenanceFileName);
+    if (fileContent.empty())
     {
-        std::string line;
-        while (std::getline(maintenanceFile, line))
+        return; // File doesn't exist or is empty
+    }
+
+    std::istringstream stream(fileContent);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        std::istringstream iss(line);
+        std::string key, value;
+        if (std::getline(iss, key, '=') && std::getline(iss, value))
         {
-            std::istringstream iss(line);
-            std::string key, value;
-            if (std::getline(iss, key, '=') && std::getline(iss, value))
+            if (key == "ODOMETER")
             {
-                if (key == "ODOMETER")
-                {
-                    odometer = stringToNumber<int>(value);
-                }
-                else if (key == "LAST_SERVICE")
-                {
-                    lastService = stringToNumber<long>(value);
-                }
-                else if (key == "SERVICE_INTERVAL")
-                {
-                    serviceInterval = stringToNumber<long>(value);
-                }
+                odometer = stringToNumber<int>(value);
+            }
+            else if (key == "LAST_SERVICE")
+            {
+                lastService = stringToNumber<long>(value);
+            }
+            else if (key == "SERVICE_INTERVAL")
+            {
+                serviceInterval = stringToNumber<long>(value);
             }
         }
-        maintenanceFile.close();
     }
 }
 
@@ -318,15 +313,16 @@ T configManager::stringToNumber(std::string_view str)
  */
 void configManager::setValuesFromConfig()
 {
-    std::ifstream configFile(configFileName);
-    if (!configFile)
+    std::string fileContent = readFileToString(configFileName);
+    if (fileContent.empty())
     {
         logHandler("setValForConfig", "Could not open config file. Reason Unknown.", Log::Level::Warn, 4);
         return;
     }
 
+    std::istringstream stream(fileContent);
     std::string configLine;
-    while (std::getline(configFile, configLine))
+    while (std::getline(stream, configLine))
     {
         if (configLine.empty() || configLine[0] == ';' || configLine[0] == '#')
         {
@@ -419,7 +415,7 @@ void configManager::setValuesFromConfig()
         else if (key == "MOTOR_CONFIG" || key == "INERTIAL" || key == "TRIPORT_CONFIG")
         {
             std::string section = key;
-            while (std::getline(configFile, configLine) && configLine != "}")
+            while (std::getline(stream, configLine) && configLine != "}")
             {
                 if (configLine.empty() || configLine.starts_with(';') || configLine.starts_with('#'))
                 {
@@ -427,10 +423,10 @@ void configManager::setValuesFromConfig()
                 }
 
                 std::string name = configLine;
-                std::getline(configFile, configLine); // Skip the opening brace
+                std::getline(stream, configLine); // Skip the opening brace
 
                 std::string port, gearRatio, reversedStr;
-                while (std::getline(configFile, configLine) && configLine != "}")
+                while (std::getline(stream, configLine) && configLine != "}")
                 {
                     std::istringstream iss(configLine);
                     std::string configKey, configValue;
@@ -472,7 +468,6 @@ void configManager::setValuesFromConfig()
             resetOrInitializeConfig(std::format("Invalid line in config file: {}. Do you want to reset the config?", configLine));
         }
     }
-    configFile.close();
 }
 
 // Method to parse the config file
@@ -504,7 +499,7 @@ void configManager::parseConfig()
 
     if (Brain.SDcard.isInserted())
     {
-        if (!Brain.SDcard.exists(configFileName.c_str()))
+        if (!fileExists(configFileName))
         {
             resetOrInitializeConfig("Missing config file. Create it?");
         }
