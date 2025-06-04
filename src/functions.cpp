@@ -196,9 +196,13 @@ void gifplayer(bool enableVsync)
     {
         return;
     }
-    else if (Competition.isAutonomous())
+    
+    // Use the passed parameter or fall back to config setting
+    bool useVsync = enableVsync || ConfigManager.getVsyncGif();
+    
+    if (Competition.isAutonomous())
     {
-        vex::Gif gif("assets/auto.gif", 0, 0);
+        vex::Gif gif("assets/auto.gif", 0, 0, useVsync, 30); // Cap at 30 FPS for performance
         while (Competition.isAutonomous())
         {
             Brain.Screen.print("");
@@ -207,7 +211,7 @@ void gifplayer(bool enableVsync)
     }
     else if (Competition.isDriverControl())
     {
-        vex::Gif gif("assets/driver.gif", 0, 0);
+        vex::Gif gif("assets/driver.gif", 0, 0, useVsync, 30); // Cap at 30 FPS for performance
         while (Competition.isDriverControl())
         {
             Brain.Screen.print("");
@@ -216,7 +220,7 @@ void gifplayer(bool enableVsync)
     }
     else
     {
-        vex::Gif gif("assets/auto.gif", 0, 0);
+        vex::Gif gif("assets/auto.gif", 0, 0, useVsync, 30); // Cap at 30 FPS for performance
         vex::timer timeoutTimer;
         while (Competition.isAutonomous() && timeoutTimer.time() < 30000) // 30 seconds timeout
         {

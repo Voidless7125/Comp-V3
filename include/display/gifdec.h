@@ -66,6 +66,8 @@ namespace vex
         int _sy;
         void *_buffer = nullptr;
         int _frame = 0;
+        bool _enable_vsync = false;
+        int _max_fps = 0; // 0 means no limit
 
         vex::timer _timer;
         vex::brain::lcd _lcd;
@@ -76,7 +78,10 @@ namespace vex
 
     public:
         Gif(const char *fname, int sx, int sy);
+        Gif(const char *fname, int sx, int sy, bool enable_vsync, int max_fps = 0);
         ~Gif();
         int getFrameIndex();
+        void setVsync(bool enable) { _enable_vsync = enable; }
+        void setMaxFps(int fps) { _max_fps = fps; }
     };
 }
