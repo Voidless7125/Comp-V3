@@ -107,16 +107,9 @@ void applyTractionControl(double &forwardVolts, double &turnVolts)
     
     // Apply traction control corrections
     if (leftSlipping || rightSlipping) {
-        if (leftSlipping) {
-            // Reduce power to left side
-            forwardVolts *= TRACTION_REDUCTION;
-            turnVolts *= TRACTION_REDUCTION;
-        }
-        if (rightSlipping) {
-            // Reduce power to right side
-            forwardVolts *= TRACTION_REDUCTION;
-            turnVolts *= TRACTION_REDUCTION;
-        }
+        // Reduce power to both sides
+        forwardVolts *= TRACTION_REDUCTION;
+        turnVolts *= TRACTION_REDUCTION;
         
         if (debugOutput) {
             printf("Traction Control: Left slip=%.1f, Right slip=%.1f, Power reduced\n", 
