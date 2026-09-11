@@ -20,3 +20,20 @@ void userControl();
 void motorMonitor();
 std::map<std::string, std::vector<int>> controllerButtonsPressed(const vex::controller &controller);
 void gifplayer(bool enableVsync = false);
+
+// --- Pre-match self-test (src/diagnostics/selftest.cpp) ---
+void runPreMatchSelfTest();
+
+// --- Match black-box CSV logging (src/diagnostics/blackbox.cpp) ---
+void blackBoxStartMatch();
+void blackBoxLogSample();
+void blackBoxLogEvent(const std::string &event);
+void blackBoxEndMatch();
+
+// --- No-extra-hardware autonomous primitives (src/autonomy/primitives.cpp) ---
+// Built on vex::smartdrive's own encoder/gyro closed-loop control - a
+// stepping stone toward full PID autonomous once distance/vision hardware
+// is available.
+bool driveStraightMm(double distanceMm, double velocityPct = 50.0);
+bool turnToHeadingDeg(double headingDeg, double velocityPct = 50.0);
+bool turnByDeg(double relativeDeg, double velocityPct = 50.0);

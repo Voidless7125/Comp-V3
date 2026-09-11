@@ -12,8 +12,8 @@
  */
 void calibrateGyro()
 {
-    InertialGyro.calibrate();
-    while (InertialGyro.isCalibrating())
+    InertialGyro->calibrate();
+    while (InertialGyro->isCalibrating())
     {
         vex::this_thread::sleep_for(20);
     }
@@ -110,8 +110,9 @@ std::string formatMotorTemps(const std::array<int, 4> &motorTemps, double batter
  * battery voltage and, if the voltage is below 12V, logs a critical warning and formats the
  * current motor temperatures along with the battery voltage.
  *
- * Additionally, it updates the odometer reading based on the average position of the left and
- * right drive motors, logs inertial measurements from a gyro sensor (pitch, roll, and yaw), and
+ * Additionally, it updates the odometer reading based on the change in average
+ * position of the left and right drive motors since the last check (a delta,
+ * not the raw cumulative reading), logs inertial measurements from a gyro sensor (pitch, roll, and yaw), and
  * updates the display on both the primary and partner controllers with the latest motor and battery data.
  *
  * @note This function runs inside a loop that continues while Competition.isEnabled() returns true.
@@ -133,19 +134,56 @@ void motorMonitor()
     };
     vex::timer monitorTimer;
     vex::timer voltageCheckTimer;
+
+    // Chassis odometer delta tracking. Previously this called
+    // ConfigManager.updateOdometer() with the raw *cumulative* encoder
+    // position every 10s tick, which re-added the same distance travelled
+    // before the previous tick on top of itself every time (e.g. tick 1 at
+    // 1000° added 1000, tick 2 at 1050° added another 1050 - overcounting
+    // by roughly 2x or worse depending on how fast the number grew). Fixed
+    // to track the delta since the last tick, same pattern as the
+    // per-motor runtime tracking below (and sharing its hot-swap guard,
+    // since LeftDriveSmart/RightDriveSmart get rebuilt on a hot-swap too).
+    double lastAvgPosition = 0;
+
+    // Per-motor runtime tracking (feature: "per-motor runtime hours").
+    // Tracks degrees traveled by each motor SINCE THE LAST TICK (a delta),
+    // not the raw cumulative position - unlike the odometer above this one
+    // deliberately avoids re-adding the same cumulative reading every tick.
+    // implausibleJumpDeg guards against a hot-swap rebind, which resets a
+    // motor object's position() back to 0 mid-match: without this, that
+    // reset would look like a huge *negative* delta and corrupt the total.
+    std::array<double, 4> lastMotorPos = {0, 0, 0, 0};
+    constexpr double implausibleJumpDeg = 5000.0; // ~a full-speed motor for 10s
+    constexpr std::array<MotorRole, 4> motorRoles = {
+        MotorRole::FrontLeft, MotorRole::FrontRight, MotorRole::RearLeft, MotorRole::RearRight};
+
+    // Match black-box logging (feature: CSV telemetry for post-match review).
+    blackBoxStartMatch();
+    vex::timer blackBoxTimer;
+
     while (Competition.isEnabled())
     {
         std::array motorTemps = {
-            static_cast<int>(frontLeftMotor.temperature(vex::temperatureUnits::celsius)),
-            static_cast<int>(frontRightMotor.temperature(vex::temperatureUnits::celsius)),
-            static_cast<int>(rearLeftMotor.temperature(vex::temperatureUnits::celsius)),
-            static_cast<int>(rearRightMotor.temperature(vex::temperatureUnits::celsius))};
+            static_cast<int>(frontLeftMotor->temperature(vex::temperatureUnits::celsius)),
+            static_cast<int>(frontRightMotor->temperature(vex::temperatureUnits::celsius)),
+            static_cast<int>(rearLeftMotor->temperature(vex::temperatureUnits::celsius)),
+            static_cast<int>(rearRightMotor->temperature(vex::temperatureUnits::celsius))};
 
         constexpr std::array motorNames = {"FLM", "FRM", "RLM", "RRM"};
 
         for (size_t i = 0; i < motorTemps.size(); ++i)
         {
             logOverheat(motorNames[i], motorTemps[i]);
+        }
+
+        // Black box: sample telemetry every 500ms - frequent enough to be
+        // useful for post-match review of a ~2 minute match, cheap enough
+        // not to matter for CPU/SD.
+        if (blackBoxTimer.time() > 500)
+        {
+            blackBoxLogSample();
+            blackBoxTimer.clear();
         }
 
         if (voltageCheckTimer.time() > 10000) // Check voltage every 10 seconds
@@ -158,10 +196,35 @@ void motorMonitor()
                 motorTempsStr = formatMotorTemps(motorTemps, Brain.Battery.voltage());
             }
 
-            int leftMotorPosition = LeftDriveSmart.position(vex::rotationUnits::deg);
-            int rightMotorPosition = RightDriveSmart.position(vex::rotationUnits::deg);
-            int averagePosition = (leftMotorPosition + rightMotorPosition) / 2;
-            ConfigManager.updateOdometer(averagePosition);
+            int leftMotorPosition = LeftDriveSmart->position(vex::rotationUnits::deg);
+            int rightMotorPosition = RightDriveSmart->position(vex::rotationUnits::deg);
+            double averagePosition = (leftMotorPosition + rightMotorPosition) / 2.0;
+            double odometerDelta = averagePosition - lastAvgPosition;
+            if (std::abs(odometerDelta) <= implausibleJumpDeg)
+            {
+                ConfigManager.updateOdometer(static_cast<int>(odometerDelta));
+            }
+            lastAvgPosition = averagePosition;
+
+            std::array<double, 4> currentMotorPos = {
+                frontLeftMotor->position(vex::rotationUnits::deg),
+                frontRightMotor->position(vex::rotationUnits::deg),
+                rearLeftMotor->position(vex::rotationUnits::deg),
+                rearRightMotor->position(vex::rotationUnits::deg)};
+
+            for (size_t i = 0; i < currentMotorPos.size(); ++i)
+            {
+                double delta = currentMotorPos[i] - lastMotorPos[i];
+                if (std::abs(delta) <= implausibleJumpDeg)
+                {
+                    ConfigManager.updateMotorRuntime(motorRoles[i], delta);
+                }
+                lastMotorPos[i] = currentMotorPos[i];
+            }
+
+            // updateOdometer()/updateMotorRuntime() above only touch memory now -
+            // one SD write for everything, instead of one per call.
+            ConfigManager.persistMaintenanceData();
 
             // Update motorTempsStr with fresh data
             motorTempsStr = std::format(
@@ -170,9 +233,9 @@ void motorMonitor()
             logHandler("motorMonitor", motorTempsStr, Log::Level::Info);
 
             std::string dataBuffer = std::format("\nX Axis: {}\nY Axis: {}\nZ Axis: {}",
-                                                 InertialGyro.pitch(vex::rotationUnits::deg),
-                                                 InertialGyro.roll(vex::rotationUnits::deg),
-                                                 InertialGyro.yaw(vex::rotationUnits::deg));
+                                                 InertialGyro->pitch(vex::rotationUnits::deg),
+                                                 InertialGyro->roll(vex::rotationUnits::deg),
+                                                 InertialGyro->yaw(vex::rotationUnits::deg));
             logHandler("motorMonitor", dataBuffer, Log::Level::Info);
 
             primaryController.Screen.clearScreen();
@@ -188,6 +251,8 @@ void motorMonitor()
             vex::this_thread::sleep_for(5000);
         }
     }
+
+    blackBoxEndMatch();
 }
 
 void gifplayer(bool enableVsync)

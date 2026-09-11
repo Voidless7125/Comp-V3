@@ -11,7 +11,7 @@ BUILD     = build
 
 # version for clang headers
 ifneq ("$(origin HEADERS)", "command line")
-HEADERS = 19
+HEADERS = 23
 endif
 
 # Project name passed from app
@@ -85,14 +85,17 @@ CLEAN = $(RMDIR) $(BUILD) 2> /dev/null || :
 endif
 
 # toolchain include and lib locations
-TOOL_INC  = -I"$(VEX_SDK_PATH)/$(PLATFORM)/clang/$(HEADERS)/include" -I"$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include/c++/14.2.1"  -I"$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include/c++/14.2.1/arm-none-eabi/thumb/v7-a+fp/softfp" -I"$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include"
-TOOL_LIB  = -L"$(VEX_SDK_PATH)/$(PLATFORM)/gcc/libs"
+TOOL_INC  = -isystem "$(VEX_SDK_PATH)/$(PLATFORM)/clang/$(HEADERS)/include" \
+            -isystem "$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include/c++/15.3.1" \
+            -isystem "$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include/c++/15.3.1/arm-none-eabi/thumb/v7-a+fp/softfp" \
+            -isystem "$(VEX_SDK_PATH)/$(PLATFORM)/gcc/include"
+TOOL_LIB  = -L"$(VEX_SDK_PATH)/$(PLATFORM)/gcc/lib/thumb/v7-a+fp/softfp"
 
 # compiler flags
 CFLAGS_CL = -target thumbv7-none-eabi -fshort-enums -Wno-unknown-attributes -U__INT32_TYPE__ -U__UINT32_TYPE__ -D__INT32_TYPE__=long -D__UINT32_TYPE__='unsigned long' 
 CFLAGS_V7 = -march=armv7-a -mfpu=neon -mfloat-abi=softfp
-CFLAGS    = ${CFLAGS_CL} ${CFLAGS_V7} -Os -Wall -Wextra -Werror=return-type -std=gnu23 $(DEFINES)
-CXX_FLAGS = ${CFLAGS_CL} ${CFLAGS_V7} -Os -Wall -Wextra -Wno-cast-function-type-mismatch -Wno-unused-parameter -Werror=return-type -fno-rtti -fno-threadsafe-statics  -std=gnu++23 -ffunction-sections -fdata-sections $(DEFINES)
+CFLAGS    = ${CFLAGS_CL} ${CFLAGS_V7} -O2 -Wall -Wextra -Werror=return-type -std=gnu23 $(DEFINES)
+CXX_FLAGS = ${CFLAGS_CL} ${CFLAGS_V7} -O2 -Wall -Wextra -Wno-cast-function-type-mismatch -Wno-unused-parameter -Werror=return-type -fno-rtti -fno-threadsafe-statics  -std=gnu++26 -ffunction-sections -fdata-sections $(DEFINES)
 
 # linker flags
 LNK_FLAGS = --no-warn-rwx-segments --no-warn-execstack -nostdlib -T "$(VEX_SDK_PATH)/$(PLATFORM)/lscript.ld" -R "$(VEX_SDK_PATH)/$(PLATFORM)/stdlib_0.lib" -Map="$(BUILD)/$(PROJECT).map" --gc-section -L"$(VEX_SDK_PATH)/$(PLATFORM)" ${TOOL_LIB}
@@ -102,7 +105,7 @@ PROJECTLIB = lib$(PROJECT)
 ARCH_FLAGS = rcs
 
 # libraries
-LIBS =  --start-group -lv5rt -lstdc++ -lc -lm -lgcc --end-group
+LIBS =  --start-group -lv5rt -lstdc++ -lc -lm --end-group
 
 # include file paths
 INC += $(addprefix -I, ${INC_F})

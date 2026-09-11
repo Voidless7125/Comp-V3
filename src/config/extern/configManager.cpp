@@ -187,12 +187,37 @@ int configManager::getMotorPort(const std::string &motorName)
     {
         return it->second;
     }
-    else
-    {
-        resetOrInitializeConfig("Motor port not found: " + motorName);
-        return it->second;
-    }
+    // Previous behaviour dereferenced `it` here even though it == end()
+    // (undefined behaviour). Log and return an explicit, safe default
+    // instead of crashing/reading garbage.
+    logHandler("configManager::getMotorPort", "Motor port not found for: " + motorName + ". Defaulting to port 1 - check config.cfg!", Log::Level::Error, 5);
+    return 1;
 }
+
+int configManager::getMotorBackupPort(const std::string &motorName) const
+{
+    auto it = motorBackupPorts.find(motorName);
+    return (it != motorBackupPorts.end()) ? it->second : -1;
+}
+
+namespace
+{
+    int roleIndexOf(MotorRole role)
+    {
+        switch (role)
+        {
+        case MotorRole::FrontLeft:
+            return 0;
+        case MotorRole::FrontRight:
+            return 1;
+        case MotorRole::RearLeft:
+            return 2;
+        case MotorRole::RearRight:
+            return 3;
+        }
+        return 0;
+    }
+} // namespace
 
 std::string configManager::getGearRatio(const std::string &motorName) const
 {
@@ -243,9 +268,9 @@ vex::gearSetting configManager::getGearSetting(const std::string &ratio) const
     }
 }
 
-void configManager::updateOdometer(const int &averagePosition)
+void configManager::updateOdometer(const int &deltaPosition)
 {
-    odometer += averagePosition;
+    odometer += deltaPosition;
     // Removed unused writeThreshold and accumulatedDistance.
 
     if (odometer - lastService >= serviceInterval && !serviceWarningLogged)
@@ -257,6 +282,26 @@ void configManager::updateOdometer(const int &averagePosition)
     {
         serviceWarningLogged = false;
     }
+
+    // NOTE: this used to call writeMaintenanceData() directly, which meant
+    // every updateOdometer()/updateMotorRuntime() call in a monitoring tick
+    // triggered its own SD write. Callers now batch updates and call
+    // persistMaintenanceData() once - see motorMonitor() in functions.cpp.
+}
+
+void configManager::updateMotorRuntime(MotorRole role, double deltaDegrees)
+{
+    motorRuntimeDeg[roleIndexOf(role)] += static_cast<long>(deltaDegrees);
+}
+
+long configManager::getMotorRuntimeDeg(MotorRole role) const
+{
+    return motorRuntimeDeg[roleIndexOf(role)];
+}
+
+void configManager::persistMaintenanceData()
+{
+    writeMaintenanceData();
 }
 
 void configManager::checkServiceInterval()
@@ -265,7 +310,35 @@ void configManager::checkServiceInterval()
     {
         logHandler("Service", "Service needed! Distance: " + std::to_string(odometer), Log::Level::Warn, 5);
         lastService = odometer;
+        writeMaintenanceData();
     }
+}
+
+/**
+ * @brief Computes a lightweight tamper-detection checksum over the
+ * maintenance values (odometer, service tracking, and per-motor runtime).
+ *
+ * @note This is deliberately simple (FNV-1a over the values plus a fixed
+ * salt) rather than a cryptographic MAC - there's no crypto library in this
+ * toolchain, and the realistic threat model here is a student opening
+ * maintenance.txt in a text editor and zeroing the odometer, not a
+ * determined adversary with a disassembler. It stops the former; it will
+ * not stop the latter. Treat it as tamper-evidence, not tamper-proofing.
+ */
+std::uint32_t configManager::computeMaintenanceChecksum(int odo, int lastSvc, int svcInterval, const long (&motorDeg)[4])
+{
+    constexpr std::uint32_t salt = 0xA53C91F7u;
+    std::string data = std::to_string(odo) + ":" + std::to_string(lastSvc) + ":" + std::to_string(svcInterval) +
+                        ":" + std::to_string(motorDeg[0]) + ":" + std::to_string(motorDeg[1]) +
+                        ":" + std::to_string(motorDeg[2]) + ":" + std::to_string(motorDeg[3]);
+
+    std::uint32_t hash = salt;
+    for (unsigned char c : data)
+    {
+        hash ^= c;
+        hash *= 16777619u; // FNV-1a prime
+    }
+    return hash;
 }
 
 configManager::ConfigType configManager::stringToConfigType(const std::string &str)

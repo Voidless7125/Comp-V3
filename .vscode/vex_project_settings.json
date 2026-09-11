@@ -1,12 +1,12 @@
 {
 	"extension": {
-		"version": "0.6.1",
+		"version": "0.8.2026020401",
 		"json": 2
 	},
 	"project": {
 		"name": "Comp_V3",
 		"description": "Advanced Startup, Offical V3. [DEV]",
-		"creationDate": "Thu, 12 Dec 2024 01:51:39 GMT",
+		"creationDate": "9/11/2026, 3:54:09 PM",
 		"platform": "V5",
 		"language": "cpp",
 		"slot": 1,

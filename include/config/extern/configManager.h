@@ -1,5 +1,6 @@
 #include <map>
 #include <string>
+#include <cstdint>
 
 /**
  * @class Log
@@ -96,10 +97,28 @@ public:
     bool getMotorReversed(const std::string &motorName) const;
     vex::gearSetting getGearSetting(const std::string &ratio) const;
     int getMotorPort(const std::string &motorName);
+    int getMotorBackupPort(const std::string &motorName) const; // -1 if no backup port configured
     vex::triport::port *getTriPort(const std::string &portName);
 
-    void updateOdometer(const int &averagePosition);
+    void updateOdometer(const int &deltaPosition);
     void checkServiceInterval();
+
+    // Per-motor accumulated runtime (in encoder degrees), tracked separately
+    // from the chassis odometer so you can tell which specific motor is
+    // closest to end-of-life rather than just "the robot" in general.
+    void updateMotorRuntime(MotorRole role, double deltaDegrees);
+    long getMotorRuntimeDeg(MotorRole role) const;
+
+    // updateOdometer()/updateMotorRuntime() above only update in-memory
+    // values now (they used to each write to the SD card individually,
+    // which meant one monitoring tick could trigger 5 separate writes).
+    // Call this once after a batch of updates to persist everything in a
+    // single write.
+    void persistMaintenanceData();
+
+    // Tamper protection: true if maintenance.txt's stored checksum didn't
+    // match its contents on load (i.e. the file was likely hand-edited).
+    bool isOdometerTamperDetected() const { return odometerTamperFlag; }
 
     ConfigType stringToConfigType(const std::string &str);
     Log::Level stringToLogLevel(const std::string &str);
@@ -112,6 +131,7 @@ public:
 
 private:
     std::map<std::string, int> motorPorts;
+    std::map<std::string, int> motorBackupPorts; // optional; absent = no backup configured
     std::map<std::string, std::string> motorGearRatios;
     std::map<std::string, bool> motorReversed;
     std::map<std::string, vex::triport::port *> triPorts;
@@ -139,6 +159,10 @@ private:
     bool serviceWarningLogged;
     int leftDeadzone;
     int rightDeadzone;
+
+    bool odometerTamperFlag = false;
+    long motorRuntimeDeg[4] = {0, 0, 0, 0}; // indexed via roleIndexOf(MotorRole)
+    static std::uint32_t computeMaintenanceChecksum(int odo, int lastSvc, int svcInterval, const long (&motorDeg)[4]);
 
     void readMaintenanceData();
     void writeMaintenanceData();

@@ -59,6 +59,9 @@ void configManager::resetOrInitializeConfig(std::string_view message)
         GEAR_RATIO=6_1
         REVERSED=true
         }
+        # BACKUP_PORT=<port> is optional on any motor above. If set, the
+        # hot-swap monitor will fail over to a spare motor wired to that
+        # port when the primary motor stops reporting installed().
         INERTIAL {
         PORT=3
         }
@@ -107,6 +110,12 @@ void configManager::writeMaintenanceData()
         maintenanceFile << "ODOMETER=" << odometer << "\n";
         maintenanceFile << "LAST_SERVICE=" << lastService << "\n";
         maintenanceFile << "SERVICE_INTERVAL=" << serviceInterval << "\n";
+        maintenanceFile << "MOTOR_DEG_FL=" << motorRuntimeDeg[0] << "\n";
+        maintenanceFile << "MOTOR_DEG_FR=" << motorRuntimeDeg[1] << "\n";
+        maintenanceFile << "MOTOR_DEG_RL=" << motorRuntimeDeg[2] << "\n";
+        maintenanceFile << "MOTOR_DEG_RR=" << motorRuntimeDeg[3] << "\n";
+        // Tamper-evidence checksum - see computeMaintenanceChecksum() for scope/limits.
+        maintenanceFile << "CHECK=" << computeMaintenanceChecksum(odometer, lastService, serviceInterval, motorRuntimeDeg) << "\n";
         maintenanceFile.close();
     }
 }
@@ -170,6 +179,9 @@ void configManager::setDriveMode(const configManager::DriveMode &mode)
 void configManager::readMaintenanceData()
 {
     std::ifstream maintenanceFile(maintenanceFileName);
+    std::uint32_t storedCheck = 0;
+    bool haveCheck = false;
+
     if (maintenanceFile.is_open())
     {
         std::string line;
@@ -191,9 +203,60 @@ void configManager::readMaintenanceData()
                 {
                     serviceInterval = stringToNumber<long>(value);
                 }
+                else if (key == "MOTOR_DEG_FL")
+                {
+                    motorRuntimeDeg[0] = stringToNumber<long>(value);
+                }
+                else if (key == "MOTOR_DEG_FR")
+                {
+                    motorRuntimeDeg[1] = stringToNumber<long>(value);
+                }
+                else if (key == "MOTOR_DEG_RL")
+                {
+                    motorRuntimeDeg[2] = stringToNumber<long>(value);
+                }
+                else if (key == "MOTOR_DEG_RR")
+                {
+                    motorRuntimeDeg[3] = stringToNumber<long>(value);
+                }
+                else if (key == "CHECK")
+                {
+                    storedCheck = static_cast<std::uint32_t>(stringToNumber<long>(value));
+                    haveCheck = true;
+                }
             }
         }
         maintenanceFile.close();
+    }
+
+    if (haveCheck)
+    {
+        std::uint32_t expected = computeMaintenanceChecksum(odometer, lastService, serviceInterval, motorRuntimeDeg);
+        if (expected != storedCheck)
+        {
+            // IMPORTANT: this function runs from ConfigManager's constructor,
+            // i.e. during static initialization - Brain/primaryController
+            // may not exist yet in this translation unit's view of the
+            // program (the same static-init-order hazard the motor globals
+            // had). logHandler() touches both, so it must NOT be called
+            // here. We only set a flag; constructRobotHardware() (called
+            // from main(), after every global is guaranteed constructed)
+            // checks isOdometerTamperDetected() and logs it there instead.
+            odometerTamperFlag = true;
+            // Fail safe: don't trust a suspiciously "reset" odometer/service
+            // pair. Force checkServiceInterval() to fire on the very next
+            // check regardless of what the (possibly edited) numbers say.
+            lastService = odometer - serviceInterval;
+            writeMaintenanceData(); // re-stamp with a valid checksum going forward (plain file I/O - safe here)
+        }
+    }
+    else if (odometer != 0 || lastService != 0)
+    {
+        // File exists from before tamper-protection was added - no CHECK
+        // line to validate against. Trust it once, then start protecting
+        // it (silently - see the logHandler note above for why nothing is
+        // logged from inside this constructor-time function).
+        writeMaintenanceData();
     }
 }
 
@@ -429,7 +492,7 @@ void configManager::setValuesFromConfig()
                 std::string name = configLine;
                 std::getline(configFile, configLine); // Skip the opening brace
 
-                std::string port, gearRatio, reversedStr;
+                std::string port, backupPort, gearRatio, reversedStr;
                 while (std::getline(configFile, configLine) && configLine != "}")
                 {
                     std::istringstream iss(configLine);
@@ -439,6 +502,12 @@ void configManager::setValuesFromConfig()
                         if (configKey == "PORT")
                         {
                             port = configValue;
+                        }
+                        else if (configKey == "BACKUP_PORT")
+                        {
+                            // Optional: a spare motor pre-wired to this port
+                            // that the hot-swap monitor can fail over to.
+                            backupPort = configValue;
                         }
                         else if (configKey == "GEAR_RATIO")
                         {
@@ -454,6 +523,10 @@ void configManager::setValuesFromConfig()
                 if (section == "MOTOR_CONFIG")
                 {
                     motorPorts[name] = stringToNumber<int>(port);
+                    if (!backupPort.empty())
+                    {
+                        motorBackupPorts[name] = stringToNumber<int>(backupPort);
+                    }
                     motorGearRatios[name] = gearRatio;
                     motorReversed[name] = stringToBool(reversedStr);
                 }
@@ -528,7 +601,9 @@ void configManager::parseConfig()
         rightDeadzone = 10; // Default right deadzone
         logHandler("configParser", "No SD card installed. Using default values.", Log::Level::Info);
     }
-    calibrateGyro();
-    gifplayer(getVsyncGif());
-    Drivetrain.setStopping(vex::brakeType::coast);
+    // NOTE: motors/Drivetrain/InertialGyro do not exist yet at this point -
+    // constructRobotHardware() must be called right after this function
+    // returns (see main.cpp) to build them from the config just parsed
+    // above. calibrateGyro()/gifplayer()/Drivetrain->setStopping() therefore
+    // moved into constructRobotHardware()/rebuildDriveGroups().
 }

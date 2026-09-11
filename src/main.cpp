@@ -15,7 +15,10 @@ std::string BuildDate = "2/22/25";
 int main()
 {
     printf("\033[2J\033[1;1H\033[0m"); // Clears console and Sets color to grey.
-    ConfigManager.parseConfig();
+    ConfigManager.parseConfig();       // Loads config.cfg (motor ports, gear ratios, etc.)
+    constructRobotHardware();          // Builds motors/Drivetrain from the config just loaded
+                                        // (previously these were built at static-init time,
+                                        // before parseConfig() had run - see robot-config.h)
     Competition.autonomous(autonomous);
     Competition.drivercontrol(userControl);
     vexCodeInit();

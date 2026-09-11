@@ -43,11 +43,11 @@ void displayMotorData(vex::motor &m)
         // no motor
         Brain.Screen.setFillColor(grey);
     }
-    else if (m.index() == frontLeftMotor.index() || m.index() == rearLeftMotor.index())
+    else if (m.index() == frontLeftMotor->index() || m.index() == rearLeftMotor->index())
     {
         Brain.Screen.setFillColor(lblue);
     }
-    else if (m.index() == frontRightMotor.index() || m.index() == rearRightMotor.index())
+    else if (m.index() == frontRightMotor->index() || m.index() == rearRightMotor->index())
     {
         Brain.Screen.setFillColor(lred);
     }
@@ -98,10 +98,10 @@ void displayTask()
     Brain.Screen.setPenColor(vex::red);
     Brain.Screen.printAt(90, 160, "DIAGNOSTIC MODE");
 
-    vex::motor *motors[] = {&frontLeftMotor,
-                            &frontRightMotor,
-                            &rearLeftMotor,
-                            &rearRightMotor};
+    vex::motor *motors[] = {frontLeftMotor.get(),
+                            frontRightMotor.get(),
+                            rearLeftMotor.get(),
+                            rearRightMotor.get()};
 
     while (true)
     {

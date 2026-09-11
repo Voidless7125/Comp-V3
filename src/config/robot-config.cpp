@@ -1,41 +1,230 @@
 #include "vex.h"
+#include <array>
+#include <algorithm>
+#include <cstdint>
 
 vex::brain Brain;
 
-int frontLeftPort = ConfigManager.getMotorPort("FRONT_LEFT_MOTOR");
-int rearLeftPort = ConfigManager.getMotorPort("REAR_LEFT_MOTOR");
-int frontRightPort = ConfigManager.getMotorPort("FRONT_RIGHT_MOTOR");
-int rearRightPort = ConfigManager.getMotorPort("REAR_RIGHT_MOTOR");
+std::unique_ptr<vex::motor> frontLeftMotor;
+std::unique_ptr<vex::motor> rearLeftMotor;
+std::unique_ptr<vex::motor_group> LeftDriveSmart;
 
-vex::gearSetting frontLeftGearRatio = ConfigManager.getGearSetting(ConfigManager.getGearRatio("FRONT_LEFT_MOTOR"));
-vex::gearSetting rearLeftGearRatio = ConfigManager.getGearSetting(ConfigManager.getGearRatio("REAR_LEFT_MOTOR"));
-vex::gearSetting frontRightGearRatio = ConfigManager.getGearSetting(ConfigManager.getGearRatio("FRONT_RIGHT_MOTOR"));
-vex::gearSetting rearRightGearRatio = ConfigManager.getGearSetting(ConfigManager.getGearRatio("REAR_RIGHT_MOTOR"));
+std::unique_ptr<vex::motor> frontRightMotor;
+std::unique_ptr<vex::motor> rearRightMotor;
+std::unique_ptr<vex::motor_group> RightDriveSmart;
 
-bool frontLeftReversed = ConfigManager.getMotorReversed("FRONT_LEFT_MOTOR");
-bool rearLeftReversed = ConfigManager.getMotorReversed("REAR_LEFT_MOTOR");
-bool frontRightReversed = ConfigManager.getMotorReversed("FRONT_RIGHT_MOTOR");
-bool rearRightReversed = ConfigManager.getMotorReversed("REAR_RIGHT_MOTOR");
-
-vex::triport::port *bumperTriPort = ConfigManager.getTriPort("REAR_BUMPER"); // Thanks vex for making this with pointers! (sarcasm)
-
-vex::motor frontLeftMotor = vex::motor(frontLeftPort, frontLeftGearRatio, frontLeftReversed);
-vex::motor rearLeftMotor = vex::motor(rearLeftPort, rearLeftGearRatio, rearLeftReversed);
-vex::motor_group LeftDriveSmart = vex::motor_group(frontLeftMotor, rearLeftMotor);
-
-vex::motor frontRightMotor = vex::motor(frontRightPort, frontRightGearRatio, frontRightReversed);
-vex::motor rearRightMotor = vex::motor(rearRightPort, rearRightGearRatio, rearRightReversed);
-vex::motor_group RightDriveSmart = vex::motor_group(frontRightMotor, rearRightMotor);
-
-vex::inertial InertialGyro = vex::inertial(vex::PORT3);
-vex::smartdrive Drivetrain = vex::smartdrive(LeftDriveSmart, RightDriveSmart, InertialGyro, 319.19, 320, 165, vex::distanceUnits::mm, 1);
+std::unique_ptr<vex::smartdrive> Drivetrain;
 
 vex::controller primaryController = vex::controller(vex::controllerType::primary);
 vex::controller partnerController = vex::controller(vex::controllerType::partner);
 
-vex::bumper RearBumper = vex::bumper(*bumperTriPort);
+std::unique_ptr<vex::inertial> InertialGyro;
+std::unique_ptr<vex::bumper> RearBumper;
 
 vex::competition Competition;
+
+namespace
+{
+    // Tracks which physical port each drive-motor role is currently bound
+    // to, and which (optional) backup port it can fail over to.
+    struct RoleBinding
+    {
+        std::string configKey;
+        int currentPort = -1;
+        int backupPort = -1; // -1 = no backup configured
+        bool onBackup = false;
+    };
+
+    RoleBinding flBinding{"FRONT_LEFT_MOTOR"};
+    RoleBinding frBinding{"FRONT_RIGHT_MOTOR"};
+    RoleBinding rlBinding{"REAR_LEFT_MOTOR"};
+    RoleBinding rrBinding{"REAR_RIGHT_MOTOR"};
+
+    RoleBinding &bindingFor(MotorRole role)
+    {
+        switch (role)
+        {
+        case MotorRole::FrontLeft:
+            return flBinding;
+        case MotorRole::FrontRight:
+            return frBinding;
+        case MotorRole::RearLeft:
+            return rlBinding;
+        case MotorRole::RearRight:
+            return rrBinding;
+        }
+        return flBinding;
+    }
+
+    std::unique_ptr<vex::motor> &motorFor(MotorRole role)
+    {
+        switch (role)
+        {
+        case MotorRole::FrontLeft:
+            return frontLeftMotor;
+        case MotorRole::FrontRight:
+            return frontRightMotor;
+        case MotorRole::RearLeft:
+            return rearLeftMotor;
+        case MotorRole::RearRight:
+            return rearRightMotor;
+        }
+        return frontLeftMotor;
+    }
+
+    std::unique_ptr<vex::motor> makeConfiguredMotor(RoleBinding &binding)
+    {
+        binding.currentPort = ConfigManager.getMotorPort(binding.configKey);
+        binding.backupPort = ConfigManager.getMotorBackupPort(binding.configKey);
+        binding.onBackup = false;
+
+        auto gear = ConfigManager.getGearSetting(ConfigManager.getGearRatio(binding.configKey));
+        bool reversed = ConfigManager.getMotorReversed(binding.configKey);
+        return std::make_unique<vex::motor>(binding.currentPort, gear, reversed);
+    }
+} // namespace
+
+void rebuildDriveGroups()
+{
+    LeftDriveSmart = std::make_unique<vex::motor_group>(*frontLeftMotor, *rearLeftMotor);
+    RightDriveSmart = std::make_unique<vex::motor_group>(*frontRightMotor, *rearRightMotor);
+    Drivetrain = std::make_unique<vex::smartdrive>(*LeftDriveSmart, *RightDriveSmart, *InertialGyro,
+                                                    319.19, 320, 165, vex::distanceUnits::mm, 1);
+    Drivetrain->setStopping(vex::brakeType::coast);
+    // Safety net for the autonomous primitives (driveStraightMm/turnToHeadingDeg/
+    // turnByDeg): without a timeout, a stalled/jammed drive would hang
+    // driveFor()/turnFor() forever waiting to reach a position it can't.
+    Drivetrain->setTimeout(3, vex::timeUnits::sec); // TUNE ME on hardware
+}
+
+void constructRobotHardware()
+{
+    frontLeftMotor = makeConfiguredMotor(flBinding);
+    frontRightMotor = makeConfiguredMotor(frBinding);
+    rearLeftMotor = makeConfiguredMotor(rlBinding);
+    rearRightMotor = makeConfiguredMotor(rrBinding);
+
+    InertialGyro = std::make_unique<vex::inertial>(vex::PORT3);
+
+    auto *bumperPort = ConfigManager.getTriPort("REAR_BUMPER");
+    RearBumper = std::make_unique<vex::bumper>(*bumperPort);
+
+    rebuildDriveGroups();
+
+    // These used to run at the tail of ConfigManager::parseConfig(), but
+    // they need InertialGyro/Drivetrain to exist first, so they moved here.
+    calibrateGyro();
+    gifplayer(ConfigManager.getVsyncGif());
+
+    // ConfigManager's constructor (static-init time, before Brain/
+    // primaryController necessarily exist) already checked the maintenance
+    // file's checksum and just set a flag if it didn't match - it couldn't
+    // safely call logHandler() from there. This is the first point after
+    // main() starts (i.e. after every global is guaranteed constructed)
+    // where it's safe to actually surface that warning.
+    if (ConfigManager.isOdometerTamperDetected())
+    {
+        logHandler("startup",
+                   "maintenance.txt checksum mismatch - odometer/service/runtime values appear to have been edited by hand. Treating service as already due.",
+                   Log::Level::Warn, 6);
+    }
+}
+
+bool checkAndHotSwapMotor(MotorRole role)
+{
+    RoleBinding &binding = bindingFor(role);
+    auto &motorPtr = motorFor(role);
+
+    if (motorPtr && motorPtr->installed())
+    {
+        return false; // primary is healthy
+    }
+
+    if (binding.backupPort <= 0 || binding.onBackup)
+    {
+        return false; // no backup configured, or already failed over once
+    }
+
+    // Probe the backup port without disturbing anything else.
+    vex::motor probe(binding.backupPort);
+    if (!probe.installed())
+    {
+        return false; // backup not plugged in (yet)
+    }
+
+    auto gear = ConfigManager.getGearSetting(ConfigManager.getGearRatio(binding.configKey));
+    bool reversed = ConfigManager.getMotorReversed(binding.configKey);
+    motorPtr = std::make_unique<vex::motor>(binding.backupPort, gear, reversed);
+    binding.onBackup = true;
+    rebuildDriveGroups();
+
+    logHandler("hotSwap",
+               std::format("{} stopped responding on port {} - switched to backup port {}.",
+                            binding.configKey, binding.currentPort, binding.backupPort),
+               Log::Level::Warn, 5);
+    blackBoxLogEvent(std::format("hotswap-auto: {} -> backup port {}", binding.configKey, binding.backupPort));
+    return true;
+}
+
+bool learnNewPortForRole(MotorRole role, vex::controller &controllerRef, int timeoutMs)
+{
+    RoleBinding &binding = bindingFor(role);
+    auto &motorPtr = motorFor(role);
+
+    controllerRef.Screen.clearScreen();
+    controllerRef.Screen.setCursor(1, 1);
+    controllerRef.Screen.print("%s:", binding.configKey.c_str());
+    controllerRef.Screen.setCursor(2, 1);
+    controllerRef.Screen.print("Plug into a free port...");
+
+    // Snapshot which ports currently have a motor, so we know which one is new.
+    std::array<bool, 21> wasInstalled{};
+    for (int p = 1; p <= 21; ++p)
+    {
+        wasInstalled[p - 1] = vex::motor(p).installed();
+    }
+
+    // vex::timer::time() returns uint32_t; compare like-for-like to avoid a
+    // signed/unsigned warning (timeoutMs is otherwise a plain "milliseconds"
+    // int for a nicer public API).
+    const std::uint32_t timeoutMsU = static_cast<std::uint32_t>(std::max(timeoutMs, 0));
+    vex::timer t;
+    while (t.time() < timeoutMsU)
+    {
+        for (int p = 1; p <= 21; ++p)
+        {
+            if (wasInstalled[p - 1])
+            {
+                continue;
+            }
+            if (vex::motor(p).installed())
+            {
+                auto gear = ConfigManager.getGearSetting(ConfigManager.getGearRatio(binding.configKey));
+                bool reversed = ConfigManager.getMotorReversed(binding.configKey);
+                motorPtr = std::make_unique<vex::motor>(p, gear, reversed);
+                binding.currentPort = p;
+                binding.onBackup = false;
+                rebuildDriveGroups();
+
+                controllerRef.Screen.clearScreen();
+                controllerRef.Screen.setCursor(1, 1);
+                controllerRef.Screen.print("%s -> Port %d", binding.configKey.c_str(), p);
+                logHandler("hotSwap", std::format("{} manually remapped to port {}.", binding.configKey, p), Log::Level::Info, 3);
+                blackBoxLogEvent(std::format("hotswap-manual: {} -> port {}", binding.configKey, p));
+                vex::this_thread::sleep_for(1500);
+                return true;
+            }
+        }
+        vex::this_thread::sleep_for(50);
+    }
+
+    controllerRef.Screen.clearScreen();
+    controllerRef.Screen.setCursor(1, 1);
+    controllerRef.Screen.print("No new motor found.");
+    vex::this_thread::sleep_for(1500);
+    return false;
+}
+
 /**
  * Check if the Y button is held at startup to enter diagnostic mode.
  */
@@ -73,7 +262,8 @@ void initializeDiagnosticMode()
 /**
  * Used to initialize code/tasks/devices added using tools in VEXcode Pro.
  *
- * This should be called at the start of your int main function.
+ * This should be called at the start of your int main function, AFTER
+ * ConfigManager.parseConfig() and constructRobotHardware() have both run.
  */
 void vexCodeInit()
 {
@@ -175,6 +365,12 @@ void vexCodeInit()
         else
         {
             logHandler("startup", message + "%", Log::Level::Info, 3);
+        }
+
+        auto selfTestChoice = getUserOption("Run self-test?", {"Yes", "No"});
+        if (selfTestChoice == "Yes")
+        {
+            runPreMatchSelfTest();
         }
 
         auto autoRun = getUserOption("Run Autonomous?", {"Yes", "No"});
